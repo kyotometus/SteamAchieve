@@ -10,7 +10,7 @@ namespace SteamAchieve.Web
         // private string _htmlFilePath = "Views/index.html";
         
         // Development file path
-        private string _htmlFilePath = "/Users/matheuscolombo/Desktop/personal/SteamAchieve/WebServer/Views/index.html";
+        private string _htmlFilePath = "/Users/mc/Desktop/personal/SteamAchieve/Web/Views/index.html";
 
         public void Start()
         {
