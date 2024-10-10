@@ -1,4 +1,5 @@
 using SteamKit2;
+using System.Threading.Tasks;
 
 namespace SteamAchieve.Steam
 {
@@ -7,17 +8,16 @@ namespace SteamAchieve.Steam
         private readonly SteamClient steamClient;
         private readonly CallbackManager manager;
         private readonly SteamUser steamUser;
-        private bool isLoggedIn = false;
         private TaskCompletionSource<bool> loginTaskCompletionSource;
-        
+
+        private bool isLoggedIn;
+
         private string _username;
         private string _password;
-        
-        public bool IsLoggedIn
-        {
-            get { return isLoggedIn; }
-            set => isLoggedIn = value;
-        }
+        private string _twoFactorCode;
+        private string _steamGuardCode;
+
+        public bool IsLoggedIn => isLoggedIn;
 
         public Auth()
         {
@@ -32,24 +32,21 @@ namespace SteamAchieve.Steam
             manager.Subscribe<SteamUser.LoggedOffCallback>(OnLoggedOff);
         }
 
-        public async Task ConnectAndLoginAsync(string username, string password)
+        public async Task ConnectAndLoginAsync(string username, string password, string twoFactorCode = "", string steamGuardCode = "")
         {
-            // Store username and password for later use
             _username = username;
             _password = password;
-
-            if (steamClient.IsConnected)
-            {
-                Console.WriteLine("Already connected to Steam. Disconnecting to retry...");
-                steamClient.Disconnect();
-                await Task.Delay(1000); // Wait a bit for disconnect to complete
-            }
+            _twoFactorCode = twoFactorCode;
+            _steamGuardCode = steamGuardCode;
 
             loginTaskCompletionSource = new TaskCompletionSource<bool>();
-            Console.WriteLine("Connecting to Steam...");
-            steamClient.Connect();
 
-            // Poll callback manager while waiting for login to complete
+            if (!steamClient.IsConnected)
+            {
+                Console.WriteLine("Connecting to Steam...");
+                steamClient.Connect();
+            }
+
             while (!loginTaskCompletionSource.Task.IsCompleted)
             {
                 manager.RunWaitCallbacks(TimeSpan.FromMilliseconds(100));
@@ -59,25 +56,27 @@ namespace SteamAchieve.Steam
             await loginTaskCompletionSource.Task; // Wait for the login result
         }
 
-
         private void OnConnected(SteamClient.ConnectedCallback callback)
         {
             Console.WriteLine("Connected to Steam. Logging in...");
             steamUser.LogOn(new SteamUser.LogOnDetails
             {
-                Username = _username, // Use the stored username
-                Password = _password  // Use the stored password
+                Username = _username,
+                Password = _password,
+                TwoFactorCode = _twoFactorCode,
+                AuthCode = _steamGuardCode
             });
         }
-
 
         private void OnDisconnected(SteamClient.DisconnectedCallback callback)
         {
             Console.WriteLine("Disconnected from Steam.");
-            IsLoggedIn = false;
+            isLoggedIn = false;
 
-            // If disconnected while waiting for login, mark the task as completed
-            loginTaskCompletionSource.TrySetResult(false);
+            if (!loginTaskCompletionSource.Task.IsCompleted)
+            {
+                loginTaskCompletionSource.TrySetResult(false);
+            }
         }
 
         private void OnLoggedOn(SteamUser.LoggedOnCallback callback)
@@ -88,21 +87,39 @@ namespace SteamAchieve.Steam
                 isLoggedIn = true;
                 loginTaskCompletionSource.TrySetResult(true);
             }
+            else if (callback.Result == EResult.AccountLogonDenied)
+            {
+                Console.WriteLine("Steam Guard code required (check your email).");
+                loginTaskCompletionSource.TrySetException(new SteamGuardRequiredException("Steam Guard code required."));
+            }
+            else if (callback.Result == EResult.AccountLoginDeniedNeedTwoFactor)
+            {
+                Console.WriteLine("Two-factor authentication code required.");
+                loginTaskCompletionSource.TrySetException(new TwoFactorCodeRequiredException("Two-factor authentication code required."));
+            }
             else
             {
                 Console.WriteLine($"Failed to log in: {callback.Result}");
                 isLoggedIn = false;
                 loginTaskCompletionSource.TrySetResult(false);
-
-                // Disconnect after a failed login
-                steamClient.Disconnect();
             }
         }
 
         private void OnLoggedOff(SteamUser.LoggedOffCallback callback)
         {
             Console.WriteLine("Logged off from Steam.");
-            IsLoggedIn = false;
+            isLoggedIn = false;
         }
+    }
+
+    // Custom exceptions to handle 2FA or Steam Guard requirements
+    public class SteamGuardRequiredException : Exception
+    {
+        public SteamGuardRequiredException(string message) : base(message) { }
+    }
+
+    public class TwoFactorCodeRequiredException : Exception
+    {
+        public TwoFactorCodeRequiredException(string message) : base(message) { }
     }
 }
